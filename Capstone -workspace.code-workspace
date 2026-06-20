@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"name": "multi_agent_workflow",
+			"path": "."
+		}
+	],
+	"settings": {
+		"python.defaultInterpreterPath": "/usr/local/bin/python3",
+		"python.analysis.extraPaths": [
+			"/Users/jeffgatwood/multi_agent_workflow"
+		],
+		"editor.formatOnSave": true,
+		"[python]": {
+			"editor.defaultFormatter": "ms-python.black-formatter"
+		},
+		"terminal.integrated.env.osx": {
+			"PYTHONPATH": "/Users/jeffgatwood/multi_agent_workflow"
+		}
+	}
+}

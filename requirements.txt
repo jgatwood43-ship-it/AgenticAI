@@ -1,0 +1,23 @@
+# Core LLM & Agent Framework
+llama-index-core>=0.11.0
+llama-index-llms-ollama>=0.4.0
+llama-index-embeddings-huggingface>=0.4.0
+llama-index-vector-stores-postgres>=0.3.0
+
+# LlamaIndex node parsers
+# llama-index-node-parser-semantic-splitter>=0.3.0
+llama-index-core>=0.10.0
+
+# Database drivers
+psycopg2-binary>=2.9.9
+pymysql>=1.1.1
+sqlalchemy>=2.0.0
+
+# MCP / tooling
+mcp>=1.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+rich>=13.0.0
+asyncio-mqtt>=0.16.0

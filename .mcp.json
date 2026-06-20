@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "dbmcp-postgres": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "set -a && source /Users/jeffgatwood/multi_agent_workflow/.env && set +a && exec dbmcp stdio"
+      ],
+      "env": {
+        "DB_BACKEND": "postgres"
+      }
+    },
+    "dbmcp-mysql": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "set -a && source /Users/jeffgatwood/multi_agent_workflow/.env && set +a && exec dbmcp stdio"
+      ],
+      "env": {
+        "DB_BACKEND": "mysql"
+      }
+    }
+  }
+}
