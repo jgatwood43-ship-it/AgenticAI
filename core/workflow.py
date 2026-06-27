@@ -24,7 +24,7 @@ FULL PIPELINE GRAPH WITH FRAMEWORKS
     │  Frameworks: RAG + ReAct + MCP   │
     │  → Semantic pgvector ANN search  │
     │    (bge-large-en-v1.5, HNSW)     │
-    │  → Optional MCP DB lookups       │
+    │  → And  MCP DB lookups           │
     └──────────────────┬───────────────┘
                        │
                        ▼
@@ -47,7 +47,7 @@ FULL PIPELINE GRAPH WITH FRAMEWORKS
                     │  Frameworks: ReAct + MCP              │
                     │  → RAG mode  : cites refined_context  │
                     │  → Direct mode: parametric knowledge  │
-                    │  → Optional MCP DB enrichment         │
+                    │  → And MCP DB enrichment             │
                     └──────────────────────────────────────┘
 
 FRAMEWORK MAPPING SUMMARY
@@ -57,19 +57,20 @@ FRAMEWORK MAPPING SUMMARY
   RAG   : Agent 2 (primary) + Agent 4 (consumes refined context).
   ToT   : Agent 3 only.  3-branch generate→evaluate→select pattern.
 """
+
 from __future__ import annotations
 
 from rich.console import Console
-from rich.panel   import Panel
-from rich.table   import Table
-from rich.text    import Text
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
-from core.llm_factory  import build_llm, build_embed_model, configure_llama_globals
-from core.state        import Route, WorkflowState
+from core.llm_factory import build_llm, build_embed_model, configure_llama_globals
+from core.state import Route, WorkflowState
 from core.vector_store import build_vector_store, build_index
-from agents.llm_decision_agent    import LLMDecisionAgent
-from agents.retriever_agent       import RetrieverAgent
-from agents.grader_writer_agent   import GraderWriterAgent
+from agents.llm_decision_agent import LLMDecisionAgent
+from agents.retriever_agent import RetrieverAgent
+from agents.grader_writer_agent import GraderWriterAgent
 from agents.answer_generator_agent import AnswerGeneratorAgent
 
 console = Console()
@@ -82,21 +83,29 @@ class MultiAgentWorkflow:
     Usage
     -----
         workflow = MultiAgentWorkflow()
-        result   = workflow.run("What are the retention policies for customer orders?")
+        result   = workflow.run("What are user access security risks?")
         print(result.answer)
     """
 
     def __init__(self) -> None:
-        console.print("\n[bold cyan]╔══════════════════════════════════════════════╗[/bold cyan]")
-        console.print("[bold cyan]║   Multi-Agent Workflow — Initialising        ║[/bold cyan]")
-        console.print("[bold cyan]╚══════════════════════════════════════════════╝[/bold cyan]\n")
+        console.print(
+            "\n[bold cyan]╔══════════════════════════════════════════════╗[/bold cyan]"
+        )
+        console.print(
+            "[bold cyan]║   Multi-Agent Workflow — Initialising        ║[/bold cyan]"
+        )
+        console.print(
+            "[bold cyan]╚══════════════════════════════════════════════╝[/bold cyan]\n"
+        )
 
         # ── Shared LLM + embeddings ──────────────────────────────────────────
         # Configures LlamaIndex global Settings so all components use Ollama
-        # llama3.1 and bge-large-en-v1.5 automatically.
-        console.print("[cyan]▶ Configuring LLM (Ollama llama3.1) and embeddings (bge-large-en-v1.5)…[/cyan]")
+        # llama3.2 and bge-large-en-v1.5 automatically.
+        console.print(
+            "[cyan]▶ Configuring LLM (Ollama llama3.2) and embeddings (bge-large-en-v1.5)…[/cyan]"
+        )
         configure_llama_globals()
-        llm         = build_llm()
+        llm = build_llm()
         embed_model = build_embed_model()
         console.print("[green]  ✔ LLM and embedding model ready.[/green]")
 
@@ -105,7 +114,7 @@ class MultiAgentWorkflow:
         # This index is the backbone of the RAG retrieval in Agent 2.
         console.print("[cyan]▶ Connecting to pgvector (RAG infrastructure)…[/cyan]")
         vector_store = build_vector_store()
-        index        = build_index(vector_store, embed_model)
+        index = build_index(vector_store, embed_model)
         console.print("[green]  ✔ pgvector index ready.[/green]")
 
         # ── Instantiate all four agent nodes ──────────────────────────────────
@@ -120,14 +129,18 @@ class MultiAgentWorkflow:
         self._retriever_agent = RetrieverAgent(llm=llm, index=index)
 
         # Agent 3: GraderWriterAgent (ToT + ReAct + MCP)  ← ToT lives here
-        console.print("  [dim]Agent 3: GraderWriterAgent   [ToT + ReAct + MCP]  ← Tree of Thought[/dim]")
+        console.print(
+            "  [dim]Agent 3: GraderWriterAgent   [ToT + ReAct + MCP]  ← Tree of Thought[/dim]"
+        )
         self._grader_agent = GraderWriterAgent(llm=llm)
 
         # Agent 4: AnswerGeneratorAgent (ReAct + MCP)
         console.print("  [dim]Agent 4: AnswerGeneratorAgent [ReAct + MCP][/dim]")
         self._answer_agent = AnswerGeneratorAgent(llm=llm)
 
-        console.print("\n[bold green]✔ All agents ready.  Workflow initialised.[/bold green]\n")
+        console.print(
+            "\n[bold green]✔ All agents ready.  Workflow initialised.[/bold green]\n"
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -147,13 +160,17 @@ class MultiAgentWorkflow:
         """
         state = WorkflowState(query=query)
 
-        console.print(f"\n[bold white on blue]  QUERY: {query}  [/bold white on blue]\n")
+        console.print(
+            f"\n[bold white on blue]  QUERY: {query}  [/bold white on blue]\n"
+        )
 
         # ─────────────────────────────────────────────────────────────────────
         # STEP 1 — LLMDecisionAgent  (ReAct + MCP)
         # ─────────────────────────────────────────────────────────────────────
-        console.rule("[bold yellow]Step 1 / 4 — LLMDecisionAgent  [ReAct + MCP][/bold yellow]")
-        
+        console.rule(
+            "[bold yellow]Step 1 / 4 — LLMDecisionAgent  [ReAct + MCP][/bold yellow]"
+        )
+
         try:
             state = await self._decision_agent.run(state)
         except Exception as exc:
@@ -169,7 +186,9 @@ class MultiAgentWorkflow:
             # ─────────────────────────────────────────────────────────────────
             # STEP 2 — RetrieverAgent  (RAG + ReAct + MCP)
             # ─────────────────────────────────────────────────────────────────
-            console.rule("[bold yellow]Step 2 / 4 — RetrieverAgent  [RAG + ReAct + MCP][/bold yellow]")
+            console.rule(
+                "[bold yellow]Step 2 / 4 — RetrieverAgent  [RAG + ReAct + MCP][/bold yellow]"
+            )
             try:
                 state = await self._retriever_agent.run(state)
             except Exception as exc:
@@ -180,7 +199,9 @@ class MultiAgentWorkflow:
             # ─────────────────────────────────────────────────────────────────
             # STEP 3 — GraderWriterAgent  (ToT + ReAct + MCP)
             # ─────────────────────────────────────────────────────────────────
-            console.rule("[bold yellow]Step 3 / 4 — GraderWriterAgent  [ToT + ReAct + MCP][/bold yellow]")
+            console.rule(
+                "[bold yellow]Step 3 / 4 — GraderWriterAgent  [ToT + ReAct + MCP][/bold yellow]"
+            )
             try:
                 state = await self._grader_agent.run(state)
             except Exception as exc:
@@ -198,7 +219,9 @@ class MultiAgentWorkflow:
         # ─────────────────────────────────────────────────────────────────────
         # STEP 4 — AnswerGeneratorAgent  (ReAct + MCP)
         # ─────────────────────────────────────────────────────────────────────
-        console.rule("[bold yellow]Step 4 / 4 — AnswerGeneratorAgent  [ReAct + MCP][/bold yellow]")
+        console.rule(
+            "[bold yellow]Step 4 / 4 — AnswerGeneratorAgent  [ReAct + MCP][/bold yellow]"
+        )
         try:
             state = await self._answer_agent.run(state)
         except Exception as exc:
@@ -216,30 +239,28 @@ class MultiAgentWorkflow:
         """Print a rich terminal summary of the completed workflow run."""
 
         # ── Pipeline summary table ────────────────────────────────────────────
-        tbl = Table(title="[bold]Pipeline Run Summary[/bold]", show_lines=True, expand=False)
-        tbl.add_column("Field",   style="cyan bold", no_wrap=True)
-        tbl.add_column("Value",   style="white")
+        tbl = Table(
+            title="[bold]Pipeline Run Summary[/bold]", show_lines=True, expand=False
+        )
+        tbl.add_column("Field", style="cyan bold", no_wrap=True)
+        tbl.add_column("Value", style="white")
         tbl.add_column("Framework", style="dim yellow")
 
-        tbl.add_row(
-            "Query",
-            state.query,
-            "—"
-        )
+        tbl.add_row("Query", state.query, "—")
         tbl.add_row(
             "Route decision",
             state.route.value.upper() if state.route else "—",
-            "ReAct + MCP  (Agent 1)"
+            "ReAct + MCP  (Agent 1)",
         )
         tbl.add_row(
             "Nodes retrieved",
             str(len(state.retrieved_nodes)),
-            "RAG / pgvector  (Agent 2)"
+            "RAG / pgvector  (Agent 2)",
         )
         tbl.add_row(
             "Context length (pre-grade)",
             f"{len(state.retrieved_context)} chars",
-            "RAG  (Agent 2 → Agent 3)"
+            "RAG  (Agent 2 → Agent 3)",
         )
 
         # ToT details
@@ -251,40 +272,22 @@ class MultiAgentWorkflow:
                 for t in state.tot_thoughts
             )
         tbl.add_row(
-            "ToT branches",
-            f"{len(state.tot_thoughts)} generated",
-            "ToT  (Agent 3)"
+            "ToT branches", f"{len(state.tot_thoughts)} generated", "ToT  (Agent 3)"
         )
-        tbl.add_row(
-            "ToT scores",
-            tot_scores or "—",
-            "ToT evaluator  (Agent 3)"
-        )
-        tbl.add_row(
-            "ToT winner",
-            tot_winner,
-            "ToT  (Agent 3)"
-        )
+        tbl.add_row("ToT scores", tot_scores or "—", "ToT evaluator  (Agent 3)")
+        tbl.add_row("ToT winner", tot_winner, "ToT  (Agent 3)")
         tbl.add_row(
             "Grade",
             state.grade.value.upper() if state.grade else "—",
-            "ToT + ReAct  (Agent 3)"
+            "ToT + ReAct  (Agent 3)",
         )
         tbl.add_row(
-            "Refined context",
-            f"{len(state.refined_context)} chars",
-            "ToT  (Agent 3)"
+            "Refined context", f"{len(state.refined_context)} chars", "ToT  (Agent 3)"
         )
         tbl.add_row(
-            "Answer length",
-            f"{len(state.answer)} chars",
-            "ReAct + MCP  (Agent 4)"
+            "Answer length", f"{len(state.answer)} chars", "ReAct + MCP  (Agent 4)"
         )
-        tbl.add_row(
-            "ReAct trace entries",
-            str(len(state.react_trace)),
-            "All agents"
-        )
+        tbl.add_row("ReAct trace entries", str(len(state.react_trace)), "All agents")
 
         console.print(tbl)
 
@@ -297,15 +300,19 @@ class MultiAgentWorkflow:
                 tot_detail.append(f"  score={t.score:.0f}/100{marker}\n", style="white")
                 snippet = t.reasoning[:200].replace("\n", " ")
                 tot_detail.append(f"    {snippet}…\n\n", style="dim")
-            console.print(Panel(
-                tot_detail,
-                title="[bold yellow]Tree of Thought Branch Details[/bold yellow]",
-                expand=False,
-            ))
+            console.print(
+                Panel(
+                    tot_detail,
+                    title="[bold yellow]Tree of Thought Branch Details[/bold yellow]",
+                    expand=False,
+                )
+            )
 
         # ── Final answer panel ────────────────────────────────────────────────
-        console.print(Panel(
-            state.answer,
-            title="[bold green]✔  Final Answer[/bold green]",
-            expand=False,
-        ))
+        console.print(
+            Panel(
+                state.answer,
+                title="[bold green]✔  Final Answer[/bold green]",
+                expand=False,
+            )
+        )

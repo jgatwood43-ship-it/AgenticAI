@@ -1,0 +1,57 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ── Interactive REPL mode ─────────────────────────────────────────────
+    // Starts the workflow and accepts queries from the terminal prompt.
+    // Usage: just run this config, then type your question at the prompt.
+    {
+      "name": "Run Workflow (Interactive)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "/Users/jeffgatwood/multi_agent_workflow/main.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "/Users/jeffgatwood/multi_agent_workflow",
+      "env": {
+        "PYTHONPATH": "/Users/jeffgatwood/multi_agent_workflow"
+      }
+    },
+    // ── Single hard-coded query ───────────────────────────────────────────
+    // Runs one query and exits.  Edit the "args" value to change the query.
+    {
+      "name": "Run Workflow (Single Query)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "/Users/jeffgatwood/multi_agent_workflow/main.py",
+      "args": [
+        "What are the user access security risks, directives and best practices?"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "/Users/jeffgatwood/multi_agent_workflow",
+      "env": {
+        "PYTHONPATH": "/Users/jeffgatwood/multi_agent_workflow"
+      }
+    },
+    // ── Document ingestion ────────────────────────────────────────────────
+    // Reads all documents from /Users/JG/multi_agent_workflow/docs/,
+    // chunks them with SemanticSplitterNodeParser, embeds with bge-large-en-v1.5,
+    // and upserts into the pgvector store.  Run this before querying.
+    {
+      "name": "Ingest Documents",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "/Users/jeffgatwood/multi_agent_workflow/main.py",
+      "args": [
+        "--ingest",
+        "/Users/jeffgatwood/multi_agent_workflow/docs/RAG"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "/Users/jeffgatwood/multi_agent_workflow",
+      "env": {
+        "PYTHONPATH": "/Users/jeffgatwood/multi_agent_workflow"
+      }
+    }
+  ]
+}

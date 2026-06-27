@@ -36,10 +36,10 @@ FRAMEWORKS USED IN THIS AGENT
 │          │ call MCP tools to fact-check context against live database data. │
 │          │ After ToT selects a winner, the ReAct agent finalises the output.│
 ├──────────┼──────────────────────────────────────────────────────────────────┤
-│ MCP      │ mysql_query and postgres_query tools let the agent cross-check   │
-│          │ facts in the retrieved context against authoritative DB records   │
-│          │ before grading.  E.g. if context mentions a product ID, the      │
-│          │ agent can verify it exists in MySQL.                              │
+│ MCP      │ mysql_query, mysql_describe_table, and mysql_list_tables tools let the agent cross-check   │
+│          │ facts in the retrieved context against authoritative DB records  │
+│          │ before grading.  E.g. if context mentions a user ID, the agent   │
+│          │ can verify it exists in MySQL.                                   │
 ├──────────┼──────────────────────────────────────────────────────────────────┤
 │ RAG      │ NOT USED directly.  This agent receives the already-retrieved    │
 │          │ context from RetrieverAgent via the shared state.                │
@@ -80,6 +80,7 @@ TERMINAL OUTPUT
   Prints a header, each ToT branch generation, branch scores,
   the winning branch selection, the final grade, and a footer summary.
 """
+
 from __future__ import annotations
 
 import json
@@ -88,11 +89,13 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from llama_index.core.agent.workflow import ReActAgent
+
 # from llama_index.core.agent import ReActAgent
 from llama_index.core.llms import LLM
 
+from core import state
 from core.state import GradeResult, ToTThought, WorkflowState
-from tools.mcp_tools import ALL_MCP_TOOLS
+from tools.mcp_tools import MYSQL_TOOLS
 from config.settings import settings as db_config
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,8 +115,8 @@ NUM_BRANCHES: int = 3
 # from multiple angles before committing to a single answer.
 BRANCH_STRATEGIES = [
     {
-        "id"      : "branch_1",
-        "persona" : "STRICT GRADER",
+        "id": "branch_1",
+        "persona": "STRICT GRADER",
         "strategy": (
             "You are a strict quality assessor. Only grade as PASS if the context "
             "directly and completely answers the query with verifiable evidence. "
@@ -122,8 +125,8 @@ BRANCH_STRATEGIES = [
         ),
     },
     {
-        "id"      : "branch_2",
-        "persona" : "LENIENT GRADER",
+        "id": "branch_2",
+        "persona": "LENIENT GRADER",
         "strategy": (
             "You are a broad-coverage assessor. Grade as PASS if the context "
             "contains ANY information related to the query topic, even tangentially. "
@@ -132,8 +135,8 @@ BRANCH_STRATEGIES = [
         ),
     },
     {
-        "id"      : "branch_3",
-        "persona" : "BALANCED GRADER",
+        "id": "branch_3",
+        "persona": "BALANCED GRADER",
         "strategy": (
             "You are a balanced quality assessor. Grade PASS if at least 50% of "
             "the context is relevant. When rewriting, filter out irrelevant sentences "
@@ -204,7 +207,7 @@ Output ONLY valid JSON in this exact format — no other text:
 """
 
 _GRADER_SYSTEM_PROMPT = """\
-You are the GRADER/WRITER COORDINATOR agent in a multi-agent RAG pipeline.
+You are the USER ACCESS CYBERSECURITY GRADER/WRITER COORDINATOR agent in a multi-agent RAG pipeline.
 
 Your job is to manage the Tree of Thought (ToT) grading process:
   1. For each branch strategy provided, evaluate the retrieved context and
@@ -212,17 +215,25 @@ Your job is to manage the Tree of Thought (ToT) grading process:
   2. You may use MCP database tools to cross-check facts before grading.
   3. After all branches are generated, select the best one based on evaluation scores.
 
-You have access to: mysql_query (MCP), postgres_query (MCP).
-Use them if you need to verify specific facts mentioned in the context.
+You have access to MySQL tools only: mysql_query and mysql_list_tables and mysql_describe_table.
+Use MySQL only to verify deterministic structured data.
+Do not query Postgres directly.
+Document evidence from Postgres must come only from the retrieved RAG context.
+
+After one successful verification tool call, immediately return a final answer.
+Do not call another tool unless the result is empty, malformed, or directly contradicts the context.
+
+If the question is conversational, asks about the assistant's purpose, or does not contain factual claims requiring database verification, return:
+NO_VERIFICATION_NEEDED
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parsing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-_GRADE_RE    = re.compile(r"GRADE:\s*(pass|fail)",         re.IGNORECASE)
-_CONF_RE     = re.compile(r"CONFIDENCE:\s*([0-9.]+)",      re.IGNORECASE)
-_REFINED_RE  = re.compile(r"REFINED_CONTEXT:\s*(.+)",      re.IGNORECASE | re.DOTALL)
+_GRADE_RE = re.compile(r"GRADE:\s*(pass|fail)", re.IGNORECASE)
+_CONF_RE = re.compile(r"CONFIDENCE:\s*([0-9.]+)", re.IGNORECASE)
+_REFINED_RE = re.compile(r"REFINED_CONTEXT:\s*(.+)", re.IGNORECASE | re.DOTALL)
 
 
 def _parse_branch_output(text: str) -> Tuple[GradeResult, float, str]:
@@ -231,8 +242,8 @@ def _parse_branch_output(text: str) -> Tuple[GradeResult, float, str]:
 
     Returns (grade, confidence, refined_context).
     """
-    grade_match   = _GRADE_RE.search(text)
-    conf_match    = _CONF_RE.search(text)
+    grade_match = _GRADE_RE.search(text)
+    conf_match = _CONF_RE.search(text)
     refined_match = _REFINED_RE.search(text)
 
     grade = (
@@ -264,9 +275,13 @@ def _parse_evaluator_scores(json_text: str, num_branches: int) -> dict:
         # Fallback: assign descending scores so we always pick branch_1
         return {
             "scores": [
-                {"branch_id": f"branch_{i+1}", "relevance": 30 - i*5,
-                 "completeness": 25 - i*5, "fidelity": 20 - i*5,
-                 "total": 75 - i*15}
+                {
+                    "branch_id": f"branch_{i+1}",
+                    "relevance": 30 - i * 5,
+                    "completeness": 25 - i * 5,
+                    "fidelity": 20 - i * 5,
+                    "total": 75 - i * 15,
+                }
                 for i in range(num_branches)
             ],
             "best_branch_id": "branch_1",
@@ -278,8 +293,9 @@ def _parse_evaluator_scores(json_text: str, num_branches: int) -> dict:
 # Agent class
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class GraderWriterAgent:
-   """
+    """
     Agent 3 – Grader / Writer.
 
     Implements Tree of Thought (ToT) grading with NUM_BRANCHES parallel
@@ -291,11 +307,12 @@ class GraderWriterAgent:
     ToT   : Multi-branch generation + evaluation + selection (PRIMARY).
     ReAct : Outer agent loop allowing MCP fact-checking before ToT.
     MCP   : mysql_query / postgres_query for cross-referencing facts.
-    """  
-   def __init__(self, llm: LLM) -> None:
+    """
+
+    def __init__(self, llm: LLM) -> None:
         # Store the LLM directly for custom ToT prompting calls
         self._llm = llm
-        
+
         # ── [ReAct] Build a ReActAgent for MCP-backed fact-checking ───────────
         # This ReActAgent is used in the pre-ToT phase to let the agent
         # optionally verify facts in the retrieved context against live DBs.
@@ -305,20 +322,19 @@ class GraderWriterAgent:
 
         # Add this initialization line so the pre-ToT phase has its engine
         self._react_agent = ReActAgent(
-            tools=ALL_MCP_TOOLS,
+            tools=MYSQL_TOOLS,
             llm=llm,
             max_iterations=db_config.react_max_iterations,
             verbose=True,
             # Give it a short, targeted system prompt for fact verification
             system_prompt=_GRADER_SYSTEM_PROMPT,
         )
-    
 
     # ─────────────────────────────────────────────────────────────────────────
     # ToT Phase 1: Generate branches
     # ─────────────────────────────────────────────────────────────────────────
 
-   def _generate_tot_branches(
+    def _generate_tot_branches(
         self,
         query: str,
         context: str,
@@ -343,10 +359,10 @@ class GraderWriterAgent:
 
             # ── [ToT] Call LLM with branch-specific strategy prompt ────────────
             branch_prompt = _BRANCH_PROMPT_TEMPLATE.format(
-                persona  = strat["persona"],
-                strategy = strat["strategy"],
-                query    = query,
-                context  = context or "(empty — context retrieval returned nothing)",
+                persona=strat["persona"],
+                strategy=strat["strategy"],
+                query=query,
+                context=context or "(empty — context retrieval returned nothing)",
             )
 
             # Direct LLM call (not via ReAct) for clean, parseable branch output
@@ -358,10 +374,10 @@ class GraderWriterAgent:
 
             # Build a ToTThought record for this branch
             thought = ToTThought(
-                branch_id = bid,
-                reasoning = branch_text,
-                score     = confidence,   # preliminary score from self-assessment
-                selected  = False,
+                branch_id=bid,
+                reasoning=branch_text,
+                score=confidence,  # preliminary score from self-assessment
+                selected=False,
             )
             branches.append(thought)
 
@@ -377,7 +393,7 @@ class GraderWriterAgent:
     # ToT Phase 2: Evaluate and score branches
     # ─────────────────────────────────────────────────────────────────────────
 
-   def _evaluate_tot_branches(
+    def _evaluate_tot_branches(
         self,
         query: str,
         original_context: str,
@@ -395,19 +411,20 @@ class GraderWriterAgent:
 
         Returns the parsed score dict including best_branch_id.
         """
-        print(f"\n[GraderWriterAgent] [ToT] Phase 2: Evaluating {len(branches)} branches…")
+        print(
+            f"\n[GraderWriterAgent] [ToT] Phase 2: Evaluating {len(branches)} branches…"
+        )
 
         # Format all branch reasoning texts for the evaluator
         branches_text = "\n\n".join(
-            f"=== {b.branch_id} ===\n{b.reasoning[:1000]}"
-            for b in branches
+            f"=== {b.branch_id} ===\n{b.reasoning[:1000]}" for b in branches
         )
 
         evaluator_prompt = _EVALUATOR_PROMPT_TEMPLATE.format(
-            n                = len(branches),
-            query            = query,
-            original_context = original_context[:800],
-            branches_text    = branches_text,
+            n=len(branches),
+            query=query,
+            original_context=original_context[:800],
+            branches_text=branches_text,
         )
 
         # ── [ToT] Evaluator LLM call ───────────────────────────────────────────
@@ -420,10 +437,16 @@ class GraderWriterAgent:
 
         # Print score table to terminal
         print("[GraderWriterAgent] [ToT] Branch scores:")
-        print(f"[GraderWriterAgent]       {'Branch':<12} {'Relevance':>10} {'Complete':>10} {'Fidelity':>10} {'Total':>8}")
+        print(
+            f"[GraderWriterAgent]       {'Branch':<12} {'Relevance':>10} {'Complete':>10} {'Fidelity':>10} {'Total':>8}"
+        )
         print("[GraderWriterAgent]       " + "─" * 52)
         for entry in scores.get("scores", []):
-            marker = " ◀ WINNER" if entry["branch_id"] == scores.get("best_branch_id") else ""
+            marker = (
+                " ◀ WINNER"
+                if entry["branch_id"] == scores.get("best_branch_id")
+                else ""
+            )
             print(
                 f"[GraderWriterAgent]       {entry['branch_id']:<12}"
                 f" {entry.get('relevance', 0):>10}"
@@ -432,7 +455,9 @@ class GraderWriterAgent:
                 f" {entry.get('total', 0):>8}{marker}"
             )
         print(f"[GraderWriterAgent] [ToT] Best branch: {scores.get('best_branch_id')}")
-        print(f"[GraderWriterAgent] [ToT] Rationale  : {scores.get('rationale', 'N/A')}")
+        print(
+            f"[GraderWriterAgent] [ToT] Rationale  : {scores.get('rationale', 'N/A')}"
+        )
 
         return scores
 
@@ -440,7 +465,7 @@ class GraderWriterAgent:
     # ToT Phase 3: Select the winning branch
     # ─────────────────────────────────────────────────────────────────────────
 
-   def _select_best_branch(
+    def _select_best_branch(
         self,
         branches: List[ToTThought],
         scores: dict,
@@ -453,22 +478,22 @@ class GraderWriterAgent:
 
         Returns (winning_thought, winning_total_score).
         """
-        best_id    = scores.get("best_branch_id", "branch_1")
-        score_map  = {
+        best_id = scores.get("best_branch_id", "branch_1")
+        score_map = {
             entry["branch_id"]: entry.get("total", 0)
             for entry in scores.get("scores", [])
         }
 
-        best_thought  : Optional[ToTThought] = None
-        best_score    : int = -1
+        best_thought: Optional[ToTThought] = None
+        best_score: int = -1
 
         for thought in branches:
             # Update the thought's score with the evaluator's total
             thought.score = score_map.get(thought.branch_id, 0)
             if thought.branch_id == best_id:
                 thought.selected = True
-                best_thought     = thought
-                best_score       = int(thought.score)
+                best_thought = thought
+                best_score = int(thought.score)
 
         # Fallback: if best_id not found, pick branch with highest score
         if best_thought is None:
@@ -476,7 +501,9 @@ class GraderWriterAgent:
             best_thought.selected = True
             best_score = int(best_thought.score)
 
-        print(f"\n[GraderWriterAgent] [ToT] Phase 3: Selected winner → {best_thought.branch_id}")
+        print(
+            f"\n[GraderWriterAgent] [ToT] Phase 3: Selected winner → {best_thought.branch_id}"
+        )
         print(f"[GraderWriterAgent]            Total score : {best_score}/100")
 
         return best_thought, best_score
@@ -485,7 +512,7 @@ class GraderWriterAgent:
     # Main run method
     # ─────────────────────────────────────────────────────────────────────────
 
-   async def run(self, state: WorkflowState) -> WorkflowState:
+    async def run(self, state: WorkflowState) -> WorkflowState:
         """
         Execute the ToT grading + ReAct MCP fact-checking pipeline.
 
@@ -502,15 +529,44 @@ class GraderWriterAgent:
                    state.tot_thoughts, state.tot_best_branch,
                    state.react_trace (appended)
         """
+
+        NO_VERIFICATION_PATTERNS = [
+            "what is your purpose",
+            "who are you",
+            "good morning",
+            "hello",
+            "hi",
+            "how are you",
+            "what can you do",
+            "what is this",
+            "tell me a joke",
+        ]
+
+        query_lower = (state.query or "").lower()
+
+        if any(p in query_lower for p in NO_VERIFICATION_PATTERNS):
+            state.refined_context = ""
+            state.grade = None
+            state.react_trace.append("[GraderWriterAgent][GUARD] Verification skipped.")
+            return state
+
         print("\n" + "═" * 70)
         print("[GraderWriterAgent] ▶  STARTING — Agent 3: Grader / Writer")
         print(f"[GraderWriterAgent]    Frameworks : ToT (PRIMARY) + ReAct + MCP")
-        print(f"[GraderWriterAgent]    RAG        : ✗  Receives context from RetrieverAgent")
-        print(f"[GraderWriterAgent]    ToT        : ✔  {NUM_BRANCHES} branches → evaluate → select best")
+        print(
+            f"[GraderWriterAgent]    RAG        : ✗  Receives context from RetrieverAgent"
+        )
+        print(
+            f"[GraderWriterAgent]    ToT        : ✔  {NUM_BRANCHES} branches → evaluate → select best"
+        )
         print(f"[GraderWriterAgent]    ReAct      : ✔  Pre-ToT MCP fact-checking")
-        print(f"[GraderWriterAgent]    MCP        : ✔  mysql_query, postgres_query for fact verification")
+        print(
+            f"[GraderWriterAgent]    MCP        : ✔  mysql_query, postgres_query for fact verification"
+        )
         print(f"[GraderWriterAgent]    Query      : {state.query}")
-        print(f"[GraderWriterAgent]    Context len: {len(state.retrieved_context)} chars")
+        print(
+            f"[GraderWriterAgent]    Context len: {len(state.retrieved_context)} chars"
+        )
         print("─" * 70)
 
         # ── [ReAct + MCP] Pre-ToT: optional fact-checking against live DBs ────
@@ -519,39 +575,58 @@ class GraderWriterAgent:
         # This grounds the ToT branches in verified facts.
         print("[GraderWriterAgent] [ReAct] Pre-ToT MCP fact-checking phase…")
         print("[GraderWriterAgent] [MCP]   Agent may call mysql_query / postgres_query")
-        print("[GraderWriterAgent]         to verify facts before generating ToT branches.")
+        print(
+            "[GraderWriterAgent]         to verify facts before generating ToT branches."
+        )
 
         pre_tot_prompt = (
-            f"QUERY: {state.query}\n\n"
-            f"RETRIEVED CONTEXT (first 600 chars):\n{state.retrieved_context[:600]}\n\n"
-            "Before grading, use your database tools to cross-check any specific "
-            "facts, IDs, or entities mentioned in the context. "
-            "Report what you verified (or that no verification was needed), "
-            "then output: PRE_TOT_CHECK_COMPLETE"
+            "Report what you verified, or say that no verification was needed.\n\n"
+            "STOPPING RULES:\n"
+            "- Call at most ONE database tool.\n"
+            "- If the first database result answers the verification need, stop immediately.\n"
+            "- Do not call another tool to re-check the same fact.\n"
+            "- Do not switch databases unless the context explicitly says the data is in that database.\n"
+            "- Your final line must be exactly: PRE_TOT_CHECK_COMPLETE"
         )
 
         # ReAct loop: agent reasons and optionally calls MCP tools
-        pre_tot_response = await self._react_agent.run(user_msg=pre_tot_prompt)
+        pre_tot_response = await self._react_agent.run(
+            user_msg=pre_tot_prompt, max_iterations=5, early_stopping_method="generate"
+        )
         if hasattr(pre_tot_response, "response"):
-          fact_check_result = str(pre_tot_response.response)
+            fact_check_result = str(pre_tot_response.response)
         else:
-          fact_check_result = str(pre_tot_response)
-        pre_tot_text     = str(pre_tot_response)
+            fact_check_result = str(pre_tot_response)
+        pre_tot_text = str(pre_tot_response)
+
+        # Guardrail: if ReAct produced a usable final response, do not let this phase
+        # keep searching or re-verifying facts.
+        if "PRE_TOT_CHECK_COMPLETE" in fact_check_result:
+            print(
+                "[GraderWriterAgent] [ReAct+MCP] Pre-ToT check completed successfully."
+            )
+        else:
+            print(
+                "[GraderWriterAgent] [ReAct+MCP] Pre-ToT check ended without completion marker."
+            )
+
         print(f"[GraderWriterAgent] [ReAct+MCP] Pre-ToT check complete.")
 
         # ── [ToT] Phase 1: Generate all branches ──────────────────────────────
-        print("\n[GraderWriterAgent] [ToT] ═══ PHASE 1: Generating thought branches ═══")
+        print(
+            "\n[GraderWriterAgent] [ToT] ═══ PHASE 1: Generating thought branches ═══"
+        )
         branches = self._generate_tot_branches(
-            query   = state.query,
-            context = state.retrieved_context,
+            query=state.query,
+            context=state.retrieved_context,
         )
 
         # ── [ToT] Phase 2: Evaluate branches ──────────────────────────────────
         print("\n[GraderWriterAgent] [ToT] ═══ PHASE 2: Evaluating branches ═══")
         scores = self._evaluate_tot_branches(
-            query            = state.query,
-            original_context = state.retrieved_context,
-            branches         = branches,
+            query=state.query,
+            original_context=state.retrieved_context,
+            branches=branches,
         )
 
         # ── [ToT] Phase 3: Select the winner ──────────────────────────────────
@@ -562,9 +637,9 @@ class GraderWriterAgent:
         grade, _, refined_context = _parse_branch_output(best_thought.reasoning)
 
         # ── Write all results into shared state ───────────────────────────────
-        state.tot_thoughts    = branches
+        state.tot_thoughts = branches
         state.tot_best_branch = best_thought.branch_id
-        state.grade           = grade
+        state.grade = grade
         state.refined_context = refined_context
 
         # Append a comprehensive trace entry
@@ -580,10 +655,14 @@ class GraderWriterAgent:
         # ── Terminal summary ──────────────────────────────────────────────────
         print("─" * 70)
         print(f"[GraderWriterAgent] ✔  COMPLETE")
-        print(f"[GraderWriterAgent]    ToT winner     : {best_thought.branch_id} ({best_score}/100)")
+        print(
+            f"[GraderWriterAgent]    ToT winner     : {best_thought.branch_id} ({best_score}/100)"
+        )
         print(f"[GraderWriterAgent]    Final grade    : {grade.value.upper()}")
         print(f"[GraderWriterAgent]    Refined ctx    : {len(refined_context)} chars")
-        print(f"[GraderWriterAgent]    Next agent     : AnswerGeneratorAgent (ReAct + MCP)")
+        print(
+            f"[GraderWriterAgent]    Next agent     : AnswerGeneratorAgent (ReAct + MCP)"
+        )
         print("═" * 70 + "\n")
 
         return state

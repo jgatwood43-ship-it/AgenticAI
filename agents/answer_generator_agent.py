@@ -25,13 +25,13 @@ FRAMEWORKS USED IN THIS AGENT
 │          │ any last-mile fact enrichment before composing the answer.        │
 │          │                                                                   │
 │          │ ReAct loop iterations:                                            │
-│          │   Thought  → "I need the latest order count from MySQL."          │
-│          │   Action   → mysql_query("SELECT COUNT(*) FROM orders …")         │
+│          │   Thought  → "I need the latest employee count from MySQL."          │
+│          │   Action   → mysql_query("SELECT COUNT(*) FROM employees …")         │
 │          │   Observe  → {"count": 1523}                                      │
 │          │   Thought  → "Good.  I can now write a complete answer."          │
 │          │   Answer   → [final synthesised response]                         │
 ├──────────┼──────────────────────────────────────────────────────────────────┤
-│ MCP      │ mysql_query and postgres_query tools available for enriching the  │
+│ MCP      │ mysql_query and mysql_describe_table and mysql_list_tables tools available for enriching the  │
 │          │ answer with live structured data (counts, dates, status values,  │
 │          │ etc.) that may not be in the vector store.                        │
 ├──────────┼──────────────────────────────────────────────────────────────────┤
@@ -51,7 +51,7 @@ REACT LOOP DETAIL
   Iteration 1  (always):
     Thought  : "The query asks about X.  The refined context says Y.
                 I should verify fact Z against the database before answering."
-    Action   : mysql_query / postgres_query  [MCP]   (optional)
+    Action   : mysql_query / mysql_describe_table / mysql_list_tables [MCP]   (optional)
     Observe  : [structured data]
 
   Final iteration:
@@ -71,14 +71,16 @@ TERMINAL OUTPUT
   Thought/Action/Observation (via verbose=True), and a final summary
   with answer length and a preview of the first 200 chars.
 """
+
 from __future__ import annotations
 
 from llama_index.core.agent.workflow import ReActAgent
+
 # from llama_index.core.agent import ReActAgent
 from llama_index.core.llms import LLM
 
 from core.state import WorkflowState
-from tools.mcp_tools import ALL_MCP_TOOLS
+from tools.mcp_tools import MYSQL_TOOL, MYSQL_LIST_TOOL, MYSQL_DESCRIBE_TABLE_TOOL
 from config.settings import settings
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,7 +88,7 @@ from config.settings import settings
 # Two-mode design is reflected in the prompt so the LLM understands both paths.
 # ─────────────────────────────────────────────────────────────────────────────
 _ANSWER_SYSTEM_PROMPT = """\
-You are the ANSWER GENERATOR agent — the final step of a multi-agent RAG pipeline.
+You are the USER ACCESS CYBERSECURITY ANSWER GENERATOR agent — the final step of a multi-agent RAG pipeline.
 
 Your job is to produce a clear, accurate, well-structured answer to the user's
 question.
@@ -109,8 +111,13 @@ Answering rules
 
 Available tools
 ───────────────
-  mysql_query     : Query the MySQL database (MCP) for live structured data.
-  postgres_query  : Query the Postgres database (MCP) for live data.
+mysql_query : Query MySQL for deterministic structured data.
+mysql_list_tables : Use MySQL to list tables for discovery
+mysql_describe_talbe: Use MySQL to describe table in order to find relationships between tables.
+
+Do not query Postgres directly.
+If document evidence is needed, it must come from CONTEXT produced by the RetrieverAgent.
+
 
 Output format
 ─────────────
@@ -124,6 +131,7 @@ Output format
 # Agent class
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class AnswerGeneratorAgent:
     """
     Agent 4 – Answer Generator.
@@ -134,7 +142,7 @@ class AnswerGeneratorAgent:
     Frameworks
     ----------
     ReAct : Core reasoning loop for answer composition + optional MCP calls.
-    MCP   : mysql_query / postgres_query for last-mile data enrichment.
+    MCP   : mysql_query / mysql_describe_table / mysql_list_tables for last-mile data enrichment.
     RAG   : Indirect — consumes refined_context from the RAG pipeline.
     """
 
@@ -143,25 +151,31 @@ class AnswerGeneratorAgent:
         # Like the other agents, verbose=True causes every Thought / Action /
         # Observation in the answer-composition loop to be printed to the terminal.
         print("\n[AnswerGeneratorAgent] ⚙  Initialising ReActAgent (ReAct + MCP)…")
-        print("[AnswerGeneratorAgent]    Tools: mysql_query (MCP), postgres_query (MCP)")
-        print("[AnswerGeneratorAgent]    ToT  : ✗  Not used — single coherent answer preferred")
-        print("[AnswerGeneratorAgent]    RAG  : ✔  Consumes refined_context from GraderWriterAgent")
+        print(
+            "[AnswerGeneratorAgent]    Tools: mysql_query (MCP), mysql_describe_table (MCP), mysql_list_tables (MCP)"
+        )
+        print(
+            "[AnswerGeneratorAgent]    ToT  : ✗  Not used — single coherent answer preferred"
+        )
+        print(
+            "[AnswerGeneratorAgent]    RAG  : ✔  Consumes refined_context from GraderWriterAgent"
+        )
 
         self._agent = ReActAgent(
-    tools=ALL_MCP_TOOLS,
-    llm=llm,
-    max_iterations=settings.react_max_iterations,
-    verbose=True,
-    # system_prompt=_DECISION_SYSTEM_PROMPT,
-    system_prompt=_ANSWER_SYSTEM_PROMPT,
+            tools=[MYSQL_TOOL, MYSQL_LIST_TOOL, MYSQL_DESCRIBE_TABLE_TOOL],
+            llm=llm,
+            max_iterations=settings.react_max_iterations,
+            verbose=True,
+            # system_prompt=_DECISION_SYSTEM_PROMPT,
+            system_prompt=_ANSWER_SYSTEM_PROMPT,
         )
         # self._agent = ReActAgent.from_tools(
-          #  tools=ALL_MCP_TOOLS,
-          #  llm=llm,
-          #  max_iterations=settings.react_max_iterations,
-          #  verbose=True,          # prints all Thought/Action/Observe to terminal
-          #  system_prompt=_ANSWER_SYSTEM_PROMPT,
-        #)
+        #  tools=ALL_MCP_TOOLS,
+        #  llm=llm,
+        #  max_iterations=settings.react_max_iterations,
+        #  verbose=True,          # prints all Thought/Action/Observe to terminal
+        #  system_prompt=_ANSWER_SYSTEM_PROMPT,
+        # )
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -177,7 +191,7 @@ class AnswerGeneratorAgent:
         ReAct flow
         ----------
         1. LLM Thought: review the query and context; decide if a DB lookup is needed.
-        2. LLM Action : mysql_query / postgres_query (optional) [MCP]
+        2. LLM Action : mysql_query / mysql_describe_table / mysql_list_tables (optional) [MCP]
         3. LLM Observe: live data returned.
         4. Steps 2-3 repeat up to max_iterations.
         5. LLM generates the final answer [RAG-grounded if context present].
@@ -185,6 +199,30 @@ class AnswerGeneratorAgent:
         Consumes : state.query, state.refined_context, state.route, state.grade
         Produces : state.answer, state.react_trace (appended)
         """
+
+        DIRECT_ANSWER_PATTERNS = [
+            "what is your purpose",
+            "who are you",
+            "good morning",
+            "hello",
+            "hi",
+            "what can you do",
+            "what is this",
+        ]
+
+        query_lower = (state.query or "").lower()
+
+        if any(p in query_lower for p in DIRECT_ANSWER_PATTERNS):
+            state.answer = (
+                "My purpose is to help answer questions related to user "
+                "access security issues and best practices by using direct reasoning when possible and "
+                "retrieval or database tools only when they are actually needed."
+            )
+            state.react_trace.append(
+                "[AnswerGeneratorAgent][GUARD] Direct answer used."
+            )
+            return state
+
         print("\n" + "═" * 70)
         print("[AnswerGeneratorAgent] ▶  STARTING — Agent 4: Answer Generator")
         print(f"[AnswerGeneratorAgent]    Framework : ReAct + MCP")
@@ -196,20 +234,34 @@ class AnswerGeneratorAgent:
         # Direct mode: context is empty — either the routing decision skipped
         #              retrieval, or the GraderWriterAgent's ToT issued a FAIL.
         has_rag_context = bool(state.refined_context.strip())
-        mode_label      = "RAG (context-grounded)" if has_rag_context else "DIRECT (parametric knowledge)"
+        mode_label = (
+            "RAG (context-grounded)"
+            if has_rag_context
+            else "DIRECT (parametric knowledge)"
+        )
 
         print(f"[AnswerGeneratorAgent]    Mode      : {mode_label}")
 
         if has_rag_context:
             # [RAG] Inform user that the answer will cite the curated context
-            print(f"[AnswerGeneratorAgent] [RAG] refined_context available ({len(state.refined_context)} chars)")
-            print("[AnswerGeneratorAgent] [RAG] Answer will be grounded in retrieved + ToT-graded passages.")
+            print(
+                f"[AnswerGeneratorAgent] [RAG] refined_context available ({len(state.refined_context)} chars)"
+            )
+            print(
+                "[AnswerGeneratorAgent] [RAG] Answer will be grounded in retrieved + ToT-graded passages."
+            )
         else:
             if state.grade is not None:
-                print("[AnswerGeneratorAgent] [RAG] GraderWriterAgent issued FAIL — context discarded.")
+                print(
+                    "[AnswerGeneratorAgent] [RAG] GraderWriterAgent issued FAIL — context discarded."
+                )
             else:
-                print("[AnswerGeneratorAgent]       Direct route taken — retrieval was skipped.")
-            print("[AnswerGeneratorAgent]       Answer will be generated from LLM parametric knowledge.")
+                print(
+                    "[AnswerGeneratorAgent]       Direct route taken — retrieval was skipped."
+                )
+            print(
+                "[AnswerGeneratorAgent]       Answer will be generated from LLM parametric knowledge."
+            )
 
         print(f"[AnswerGeneratorAgent]    Query     : {state.query}")
         print("─" * 70)
@@ -235,16 +287,29 @@ class AnswerGeneratorAgent:
         #   2. Optionally call mysql_query / postgres_query [MCP].
         #   3. Compose a final grounded answer.
         # All Thought/Action/Observation steps are printed by verbose=True.
-        print("[AnswerGeneratorAgent] [ReAct] Starting Thought → Action → Observe loop…")
-        print("[AnswerGeneratorAgent] [MCP]   Tools armed: mysql_query, postgres_query")
-        print("[AnswerGeneratorAgent]         (agent will call these if live data is needed)")
+        print(
+            "[AnswerGeneratorAgent] [ReAct] Starting Thought → Action → Observe loop…"
+        )
+        print(
+            "[AnswerGeneratorAgent] [MCP]   Tools armed: mysql_query, mysql_describe_table, mysql_list_tables"
+        )
+        print(
+            "[AnswerGeneratorAgent]         (agent will call these if live data is needed)"
+        )
 
         prompt = (
             f"QUERY: {state.query}\n\n"
             f"{context_block}\n\n"
-            "Please generate a comprehensive, accurate answer to the query.\n"
-            "If you need live data from a database to complete or verify your answer, "
-            "use the available tools."
+            "Please generate a comprehensive, accurate answer to the query.\n\n"
+            "DATABASE TOOL RULES:\n"
+            "- Use a database tool only if the answer cannot be completed from CONTEXT.\n"
+            "- Call at most ONE database tool.\n"
+            "- If the first database result answers the question, stop calling tools.\n"
+            "- Do not verify the same fact more than once.\n"
+            "- Do not switch between MySQL and Postgres unless CONTEXT explicitly says to.\n"
+            "- Never issue placeholder SQL such as IN (1, 2, ..., 10).\n\n"
+            "FINAL ANSWER RULE:\n"
+            "After receiving a useful database result, immediately write the final answer."
         )
 
         # ── [ReAct + RAG + MCP] Execute answer generation ─────────────────────
@@ -254,7 +319,7 @@ class AnswerGeneratorAgent:
         #   • It produces the final answer text.
         # response      = self._agent.chat(prompt)
         response = await self._agent.run(user_msg=prompt)
-        state.answer  = str(response)
+        state.answer = str(response)
 
         if hasattr(response, "response"):
             state.answer = str(response.response)
@@ -264,7 +329,7 @@ class AnswerGeneratorAgent:
             state.answer = str(response)
 
             if state.react_trace is None:
-               state.react_trace = []
+                state.react_trace = []
 
         # Append trace entry with mode, route, and grade for full observability
         state.react_trace.append(
@@ -281,7 +346,9 @@ class AnswerGeneratorAgent:
         print(f"[AnswerGeneratorAgent] ✔  COMPLETE")
         print(f"[AnswerGeneratorAgent]    Mode         : {mode_label}")
         print(f"[AnswerGeneratorAgent]    Answer length: {len(state.answer)} chars")
-        print(f"[AnswerGeneratorAgent]    Preview      : {state.answer[:120].replace(chr(10), ' ')}…")
+        print(
+            f"[AnswerGeneratorAgent]    Preview      : {state.answer[:120].replace(chr(10), ' ')}…"
+        )
         print("═" * 70 + "\n")
 
         return state

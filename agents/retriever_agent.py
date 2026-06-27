@@ -27,7 +27,7 @@ FRAMEWORKS USED IN THIS AGENT
 │          │   • Iteratively refine the search if the first pass is weak.      │
 │          │   • Combine vector results with structured DB lookups (via MCP).  │
 ├──────────┼──────────────────────────────────────────────────────────────────┤
-│ MCP      │ mysql_query and postgres_query tools are available for pulling    │
+│ MCP      │ mysql_query, mysql_describe_table, mysql_list_tables tools are available for pulling    │
 │          │ structured metadata, foreign-key lookups, or cross-referencing    │
 │          │ relational data alongside the vector search results.              │
 ├──────────┼──────────────────────────────────────────────────────────────────┤
@@ -40,7 +40,7 @@ RAG ARCHITECTURE DETAIL
 ───────────────────────
   Embedding model : BAAI/bge-large-en-v1.5 (1024-dim, Apple MPS-accelerated)
   Chunking        : SemanticSplitterNodeParser (applied at ingest time)
-  Vector store    : Postgres pgvector @ 192.168.86.48:5432
+  Vector store    : Postgres pgvector (connection supplied by configuration)
   ANN index       : HNSW (m=16, ef_construction=64, ef_search=40)
   Top-k           : 5 nodes per query (configurable)
 
@@ -51,7 +51,7 @@ REACT LOOP DETAIL
   Action   : vector_search("X concept")          ← RAG call into pgvector
   Observe  : [top-5 document chunks returned]
   Thought  : "Chunks look relevant.  Let me also check the MySQL DB for metadata."
-  Action   : mysql_query("SELECT …")             ← MCP call
+  Action   : mysql_query("SELECT …"), or mysql_describe_table("table_name"), or mysql_list_tables()              ← MCP call
   Observe  : [structured rows returned]
   Answer   : [combined context returned to orchestrator]
 
@@ -60,16 +60,19 @@ TERMINAL OUTPUT
   Prints a header banner, RAG search announcement, each MCP tool call,
   the number of nodes retrieved, and a footer summary.
 """
+
 from __future__ import annotations
 
 from llama_index.core.agent.workflow import ReActAgent
 from llama_index.core import VectorStoreIndex
+
 # from llama_index.core.agent import ReActAgent
 from llama_index.core.llms import LLM
 from llama_index.core.tools import QueryEngineTool
 
+from core import state
 from core.state import WorkflowState
-from tools.mcp_tools import ALL_MCP_TOOLS
+from tools.mcp_tools import MYSQL_TOOLS
 from config.settings import settings as db_config
 
 import asyncio
@@ -80,7 +83,7 @@ import asyncio
 # Distinguishes this agent's role clearly from AnswerGeneratorAgent.
 # ─────────────────────────────────────────────────────────────────────────────
 _RETRIEVER_SYSTEM_PROMPT = """\
-You are a RETRIEVAL SPECIALIST agent in a multi-agent RAG pipeline.
+You are a USER ACCESS CYBERSECURITY RETRIEVAL SPECIALIST agent in a multi-agent RAG pipeline.
 
 Your SOLE purpose is to find the most relevant document chunks from the vector
 database and, optionally, supplementary structured data from the relational
@@ -92,23 +95,31 @@ Available tools
                     Use this as your PRIMARY tool.
   mysql_query     : SQL query against the MySQL database (MCP).
                     Use for structured metadata or relational lookups.
-  postgres_query  : SQL query against Postgres (MCP, non-vector tables).
-                    Use for cross-referencing data alongside vector results.
+  mysql_describe_table : Describe the structure of a specific MySQL table (MCP). Used to help
+                    find relationships between tables.
+  mysql_list_tables    : List all tables in the MySQL database (MCP). Used to help find 
+                    relationships between tables.
 
 REACT INSTRUCTIONS
 ──────────────────
 1. Analyse the question — identify 1-3 distinct search angles / sub-queries.
 2. Call vector_search for each angle to maximise recall.
-3. If a relational lookup would add useful structured facts, call mysql_query
-   or postgres_query.
+3. If a relational lookup would add useful structured facts, call mysql_query, mysql_list_tables, mysql_describe_table.
 4. Aggregate ALL retrieved passages and return them verbatim.
 5. Do NOT summarise, filter, or answer the question.
 """
-
+NO_RETRIEVAL_PATTERNS = [
+    "what is your purpose",
+    "who are you",
+    "good morning",
+    "hello",
+    "hi",
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: wrap the VectorStoreIndex as a LlamaIndex QueryEngineTool
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _build_vector_search_tool(
     index: VectorStoreIndex,
@@ -144,6 +155,7 @@ def _build_vector_search_tool(
 # Agent class
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class RetrieverAgent:
     """
     Agent 2 – Retriever Node.
@@ -156,14 +168,18 @@ class RetrieverAgent:
     ----------
     RAG   : Primary retrieval via LlamaIndex VectorStoreIndex + pgvector.
     ReAct : Reasoning loop enabling multi-angle querying and tool composition.
-    MCP   : Supplementary MySQL / Postgres access via Database-MCP server.
+    MCP   : Supplementary MySQL access via Database-MCP server.
     """
 
     def __init__(self, llm: LLM, index: VectorStoreIndex) -> None:
         # ── [RAG] Build the vector search tool from the pgvector index ─────────
-        print("\n[RetrieverAgent] ⚙  Building RAG vector_search tool from pgvector index…")
+        print(
+            "\n[RetrieverAgent] ⚙  Building RAG vector_search tool from pgvector index…"
+        )
         print(f"[RetrieverAgent]    Embedding model : {db_config.embed_model_name}")
-        print(f"[RetrieverAgent]    Vector DB       : {db_config.pg_host}:{db_config.pg_port}/{db_config.pg_database}")
+        print(
+            f"[RetrieverAgent]    Vector DB       : {db_config.pg_host}:{db_config.pg_port}/{db_config.pg_database}"
+        )
         print(f"[RetrieverAgent]    Table           : {db_config.pg_table}")
         print(f"[RetrieverAgent]    ANN index       : HNSW (similarity_top_k=5)")
 
@@ -177,23 +193,25 @@ class RetrieverAgent:
         # The tool list order matters: vector_search is listed first to signal
         # its primacy; MCP tools follow as supplementary options.
         print("[RetrieverAgent] ⚙  Initialising ReActAgent (ReAct + RAG + MCP)…")
-        print("[RetrieverAgent]    Tools: vector_search (RAG), mysql_query (MCP), postgres_query (MCP)")
+        print(
+            "[RetrieverAgent]    Tools: vector_search (RAG), mysql_query (MCP), mysql_list_tables (MCP), mysql_describe_table (MCP)"
+        )
 
         self._agent = ReActAgent(
-    tools=ALL_MCP_TOOLS,
-    llm=llm,
-    max_iterations=db_config.react_max_iterations,
-    verbose=True,
-    # system_prompt=_DECISION_SYSTEM_PROMPT,
-    system_prompt=_RETRIEVER_SYSTEM_PROMPT,
+            tools=[vector_tool] + MYSQL_TOOLS,
+            llm=llm,
+            max_iterations=db_config.react_max_iterations,
+            verbose=True,
+            # system_prompt=_DECISION_SYSTEM_PROMPT,
+            system_prompt=_RETRIEVER_SYSTEM_PROMPT,
         )
         # self._agent = ReActAgent.from_tools(
-           # tools=[vector_tool, *ALL_MCP_TOOLS],   # RAG tool first, then MCP tools
-           # llm=llm,
-           # max_iterations=settings.react_max_iterations,
-           # verbose=True,                           # prints Thought/Action/Observe
-           # system_prompt=_RETRIEVER_SYSTEM_PROMPT,
-        #)
+        # tools=[vector_tool, *ALL_MCP_TOOLS],   # RAG tool first, then MCP tools
+        # llm=llm,
+        # max_iterations=settings.react_max_iterations,
+        # verbose=True,                           # prints Thought/Action/Observe
+        # system_prompt=_RETRIEVER_SYSTEM_PROMPT,
+        # )
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -207,7 +225,7 @@ class RetrieverAgent:
         2. LLM Action : vector_search(<angle>)  → pgvector ANN search [RAG]
         3. LLM Observe: top-k document chunks returned.
         4. LLM Thought: assess coverage; decide if another angle or MCP call needed.
-        5. LLM Action : mysql_query / postgres_query (optional) [MCP]
+        5. LLM Action : mysql_query / mysql_list_tables / mysql_describe_table [MCP]
         6. LLM Observe: structured data returned.
         7. Steps 2-6 repeat up to max_iterations.
         8. LLM emits aggregated context as its final answer.
@@ -220,6 +238,15 @@ class RetrieverAgent:
         Produces : state.retrieved_nodes, state.retrieved_context,
                    state.react_trace (appended)
         """
+
+        query_lower = (state.query or "").lower()
+
+        if any(p in query_lower for p in NO_RETRIEVAL_PATTERNS):
+            state.retrieved_nodes = []
+            state.retrieved_context = ""
+            state.react_trace.append("[RetrieverAgent][GUARD] Retrieval skipped.")
+            return state
+
         print("\n" + "═" * 70)
         print("[RetrieverAgent] ▶  STARTING — Agent 2: Retriever Node")
         print(f"[RetrieverAgent]    Frameworks : ReAct + RAG + MCP")
@@ -233,7 +260,9 @@ class RetrieverAgent:
         # mysql_query / postgres_query is an MCP call.
         print("[RetrieverAgent] [ReAct] Starting Thought → Action → Observe loop…")
         print("[RetrieverAgent] [RAG]   Primary tool: vector_search (pgvector ANN)")
-        print("[RetrieverAgent] [MCP]   Supplementary: mysql_query, postgres_query")
+        print(
+            "[RetrieverAgent] [MCP]   Supplementary: mysql_query, mysql_list_tables, mysql_describe_table"
+        )
 
         prompt = (
             f"Retrieve all relevant context for the following question:\n\n"
@@ -242,7 +271,7 @@ class RetrieverAgent:
             "1. Identify 1-3 distinct search angles for this query.\n"
             "2. Call vector_search for each angle to maximise document recall.\n"
             "3. If useful structured data might exist in a relational DB, call "
-            "mysql_query or postgres_query.\n"
+            "mysql_query or mysql_list_tables or mysql_describe_table.\n"
             "4. Return ALL retrieved passages verbatim — do NOT filter or answer."
         )
 
@@ -267,7 +296,9 @@ class RetrieverAgent:
         for i, node in enumerate(state.retrieved_nodes):
             score = getattr(node, "score", "N/A")
             snippet = node.node.get_content()[:80].replace("\n", " ")
-            print(f"[RetrieverAgent]       Node {i+1}: score={score:.4f}  text='{snippet}…'")
+            print(
+                f"[RetrieverAgent]       Node {i+1}: score={score:.4f}  text='{snippet}…'"
+            )
 
         # Store the full aggregated context text for the grader
         state.retrieved_context = response_text
@@ -282,8 +313,12 @@ class RetrieverAgent:
         print("─" * 70)
         print(f"[RetrieverAgent] ✔  COMPLETE")
         print(f"[RetrieverAgent]    Nodes retrieved  : {len(state.retrieved_nodes)}")
-        print(f"[RetrieverAgent]    Context length   : {len(state.retrieved_context)} chars")
-        print(f"[RetrieverAgent]    Next agent       : GraderWriterAgent (ReAct + ToT + MCP)")
+        print(
+            f"[RetrieverAgent]    Context length   : {len(state.retrieved_context)} chars"
+        )
+        print(
+            f"[RetrieverAgent]    Next agent       : GraderWriterAgent (ReAct + ToT + MCP)"
+        )
         print("═" * 70 + "\n")
 
         return state

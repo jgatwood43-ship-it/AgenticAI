@@ -1,0 +1,32 @@
+{
+  // ── Python interpreter ───────────────────────────────────────────────────
+  // Points to the Python 3.13 binary on your Mac.
+  // Adjust if you use a venv: e.g. "/Users/jeffgatwood/multi_agent_workflow/.venv/bin/python3"
+  "python.defaultInterpreterPath": "/Users/jeffgatwood/multi_agent_workflow/.venv/bin/python3.13",
+  //"python.defaultInterpreterPath": "/usr/local/bin/python3",
+  // ── Module resolution ────────────────────────────────────────────────────
+  // Adds the project root to Pylance's import search path so that
+  // "from core.state import …" resolves correctly without a src/ layout.
+  "python.analysis.extraPaths": [
+    "/Users/jeffgatwood/multi_agent_workflow"
+  ],
+  // ── Editor ───────────────────────────────────────────────────────────────
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  // ── Terminal environment ──────────────────────────────────────────────────
+  // Ensures PYTHONPATH is set correctly when you open a new terminal in VS Code
+  // so you can run `python3 main.py` without import errors.
+  "terminal.integrated.env.osx": {
+    "PYTHONPATH": "/Users/jeffgatwood/multi_agent_workflow"
+  },
+  "chat.mcp.serverSampling": {
+    "multi_agent_workflow/.mcp.json: dbmcp-mysql": {
+      "allowedModels": []
+    },
+    "multi_agent_workflow/.mcp.json: dbmcp-postgres": {
+      "allowedModels": []
+    }
+  }
+}

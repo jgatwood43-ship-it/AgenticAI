@@ -3,6 +3,7 @@ config/settings.py
 ──────────────────
 Loads all environment variables and exposes typed settings used across the workflow.
 """
+
 import os
 from dotenv import load_dotenv
 
@@ -12,17 +13,21 @@ load_dotenv()
 class Settings:
     # Ollama
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.1")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
 
     # Postgres
     pg_host: str = os.getenv("PG_HOST", "localhost")
     pg_port: str = os.getenv("PG_PORT", "5432")
     pg_name: str = os.getenv("PG_DATABASE", "postgres")
-    pg_database: str = os.getenv("PG_DATABASE", "postgres") # Add this line for the vector store
+    pg_database: str = os.getenv(
+        "PG_DATABASE", "postgres"
+    )  # Add this line for the vector store
     pg_user: str = os.getenv("PG_USER", "postgres")
     pg_password: str = os.getenv("PG_PASSWORD", "")
     pg_vector_table: str = os.getenv("PG_VECTOR_TABLE", "document_ebeddings")
-    pg_table: str = os.getenv("PG__VECTOR_TABLE", "document_embeddings")  # 💡 Add this line for the vector store
+    pg_table: str = os.getenv(
+        "PG__VECTOR_TABLE", "document_embeddings"
+    )  # 💡 Add this line for the vector store
 
     # MySQL
     mysql_host: str = os.getenv("MYSQL_HOST", "localhost")
@@ -30,21 +35,6 @@ class Settings:
     mysql_name: str = os.getenv("MYSQL_DATABASE", "mysql")
     mysql_user: str = os.getenv("MYSQL_USER", "root")
     mysql_password: str = os.getenv("MYSQL_PASSWORD", "")
-
-    # MySQL
-    # mysql_host: str = os.getenv("MYSQL_HOST", "192.168.1.205")
-    # mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
-    # mysql_user: str = os.getenv("MYSQL_USER", "AgenticAI")
-    # mysql_password: str = os.getenv("MYSQL_PASSWORD", "AgenticAI")
-    # mysql_database: str = os.getenv("MYSQL_DATABASE", "AgenticAI")
-
-    # Postgres Vector DB
-    # pg_host: str = os.getenv("POSTGRES_HOST", "192.168.1.206")
-    # pg_port: int = int(os.getenv("POSTGRES_PORT", "5432"))
-    # pg_user: str = os.getenv("POSTGRES_USER", "AgenticAI")
-    # pg_password: str = os.getenv("POSTGRES_PASSWORD", "AgenticAI")
-    # pg_database: str = os.getenv("POSTGRES_DATABASE", "AgenticAI")
-    # pg_table: str = os.getenv("POSTGRES_VECTOR_TABLE", "document_embeddings")
 
     @property
     def pg_connection_string(self) -> str:

@@ -7,11 +7,12 @@ Run interactively:
     python main.py
 
 Or pass a single query:
-    python main.py "What are the order retention policies?"
+    python main.py "What are the user access cybersecurity policies?"
 
 To ingest documents first:
     python main.py --ingest path/to/docs/
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,60 +49,64 @@ async def async_query_loop(workflow):
             user_input = input("\nQuery: ").strip()
             if user_input.lower() in ["exit", "quit"]:
                 break
-                
+
             if not user_input:
                 continue
-                
+
             #  Runs on the same, continuously open event loop
             state = await workflow.run(user_input)
             print(f"\nFinal Answer: {state.answer}")
-            
+
         except Exception as e:
             print(f"Workflow error: {e}")
+
 
 # 2. Keep your synchronous main setup thin
 def main():
     # ... your existing workflow and LLM initialization code ...
     from core.workflow import MultiAgentWorkflow
-    workflow = MultiAgentWorkflow() 
-    
+
+    workflow = MultiAgentWorkflow()
+
     # Kicks off the loop exactly ONCE natively
     asyncio.run(async_query_loop(workflow))
+
 
 if __name__ == "__main__":
     main()
 
+
 def query_mode(query: str | None) -> None:
-   """Run the multi-agent workflow for one query (interactive if None)."""
-   from core.workflow import MultiAgentWorkflow
+    """Run the multi-agent workflow for one query (interactive if None)."""
+    from core.workflow import MultiAgentWorkflow
 
-   workflow = MultiAgentWorkflow()
+    workflow = MultiAgentWorkflow()
 
-   if query:
-       workflow.run(query)
-   else:
-       console.print("[bold]Multi-Agent Workflow – Interactive Mode[/bold]")
-       console.print("Type [bold]exit[/bold] or [bold]quit[/bold] to stop.\n")
-       while True:
-           try:
-               user_input = console.input("[bold green]Query:[/bold green] ").strip()
-           except (KeyboardInterrupt, EOFError):
-               console.print("\n[yellow]Bye![/yellow]")
-               break
+    if query:
+        workflow.run(query)
+    else:
+        console.print("[bold]Multi-Agent Workflow – Interactive Mode[/bold]")
+        console.print("Type [bold]exit[/bold] or [bold]quit[/bold] to stop.\n")
+        while True:
+            try:
+                user_input = console.input("[bold green]Query:[/bold green] ").strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print("\n[yellow]Bye![/yellow]")
+                break
 
-           if not user_input:
-               continue
-           if user_input.lower() in {"exit", "quit"}:
-               break
+            if not user_input:
+                continue
+            if user_input.lower() in {"exit", "quit"}:
+                break
 
-           asyncio.run(workflow.run(user_input))
-           workflow.run(user_input)
-           console.print()
+            asyncio.run(workflow.run(user_input))
+            workflow.run(user_input)
+            console.print()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Multi-Agent RAG Workflow (Ollama llama3.1 + pgvector + MCP)"
+        description="Multi-Agent RAG Workflow (Ollama llama3.2 + pgvector)"
     )
     parser.add_argument(
         "query",
