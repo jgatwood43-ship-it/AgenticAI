@@ -1,0 +1,9 @@
+.venv/
+venv/
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+*.zip
+/Users/jeffgatwood/multi_agent_workflow/.venv/lib/python3.13/site-packages/torch/lib/libtorch_cpu.dylib
