@@ -220,6 +220,16 @@ Use MySQL only to verify deterministic structured data.
 Do not query Postgres directly.
 Document evidence from Postgres must come only from the retrieved RAG context.
 
+"STRUCTURED DATA RULES:\n"
+"- For employee, title, department, role, or access-list questions, use MySQL tools.\n"
+"- Never guess column names.\n"
+"- Before writing a SELECT query, first call mysql_list_tables if table names are unknown.\n"
+"- Then call mysql_describe_table for the most relevant table.\n"
+"- If a table contains an ID field such as job_title_id, role_id, department_id, or user_id, look for a related lookup table before answering.\n"
+"- Do not stop after finding an ID field. Resolve the ID to the human-readable name when possible.\n"
+"- If a query fails because of an unknown column, do not repeat the same query. Inspect the schema and correct the query.\n\n"
+
+
 After one successful verification tool call, immediately return a final answer.
 Do not call another tool unless the result is empty, malformed, or directly contradicts the context.
 

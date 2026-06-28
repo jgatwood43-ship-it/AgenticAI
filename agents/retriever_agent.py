@@ -94,11 +94,21 @@ Available tools
   vector_search   : Semantic ANN search over the pgvector document store.
                     Use this as your PRIMARY tool.
   mysql_query     : SQL query against the MySQL database (MCP).
-                    Use for structured metadata or relational lookups.
+                    Use for structured metadata.
   mysql_describe_table : Describe the structure of a specific MySQL table (MCP). Used to help
                     find relationships between tables.
   mysql_list_tables    : List all tables in the MySQL database (MCP). Used to help find 
                     relationships between tables.
+
+"STRUCTURED DATA RULES:\n"
+"- For employee, title, department, role, or access-list questions, use MySQL tools.\n"
+"- Never guess column names.\n"
+"- Before writing a SELECT query, first call mysql_list_tables if table names are unknown.\n"
+"- Then call mysql_describe_table for the most relevant table.\n"
+"- If a table contains an ID field such as job_title_id, role_id, department_id, or user_id, look for a related lookup table before answering.\n"
+"- Do not stop after finding an ID field. Resolve the ID to the human-readable name when possible.\n"
+"- If a query fails because of an unknown column, do not repeat the same query. Inspect the schema and correct the query.\n\n"
+
 
 REACT INSTRUCTIONS
 ──────────────────
@@ -281,8 +291,24 @@ class RetrieverAgent:
         # MCP calls inside agent.chat() trigger:
         #   npx database-mcp → SQL executed → rows returned as JSON
         # response = self._agent.chat(prompt)
-        response = await self._agent.run(user_msg=prompt)
-        response_text = str(response)
+        # response = await self._agent.run(user_msg=prompt)
+        # response_text = str(response)
+
+        try:
+            response = await self._agent.run(
+                user_msg=prompt,
+                max_iterations=db_config.react_max_iterations,
+                early_stopping_method="generate",
+            )
+            response_text = (
+                str(response.response)
+                if hasattr(response, "response")
+                else str(response)
+            )
+
+        except Exception as exc:
+            print(f"[RetrieverAgent] ⚠️ ReAct retrieval stopped early: {exc}")
+            response_text = ""
 
         # ── [RAG] Pull raw NodeWithScore objects directly from the index ───────
         # This gives us similarity scores and raw node metadata that the

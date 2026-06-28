@@ -6,20 +6,22 @@ Typed with Pydantic for safety and easy serialisation.
 
 Extended to carry Tree of Thought (ToT) artifacts produced by GraderWriterAgent.
 """
+
 from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Enumerations
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class Route(str, Enum):
     """Routing decisions produced by the LLM Decision Step agent."""
-    RETRIEVER        = "retriever"
+
+    RETRIEVER = "retriever"
     ANSWER_GENERATOR = "answer_generator"
 
 
@@ -31,6 +33,7 @@ class GradeResult(str, Enum):
 # ─────────────────────────────────────────────────────────────────────────────
 # Tree of Thought thought node
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class ToTThought(BaseModel):
     """
@@ -44,15 +47,17 @@ class ToTThought(BaseModel):
     score       : Evaluation score (0.0 – 1.0) assigned by the ToT evaluator.
     selected    : True if this branch was chosen as the best path forward.
     """
-    branch_id : str   = Field(..., description="Unique branch label.")
-    reasoning : str   = Field(..., description="Reasoning text for this thought branch.")
-    score     : float = Field(0.0,  description="Evaluation score 0.0–1.0.")
-    selected  : bool  = Field(False, description="Was this branch selected as best?")
+
+    branch_id: str = Field(..., description="Unique branch label.")
+    reasoning: str = Field(..., description="Reasoning text for this thought branch.")
+    score: float = Field(0.0, description="Evaluation score 0.0–1.0.")
+    selected: bool = Field(False, description="Was this branch selected as best?")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main shared state
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class WorkflowState(BaseModel):
     """
@@ -124,6 +129,18 @@ class WorkflowState(BaseModel):
     react_trace: List[str] = Field(
         default_factory=list,
         description="Step-by-step ReAct Thought/Action/Observation trace.",
+    )
+
+    # ── Guardrail trace ─────────────────────────────────────────────────────────
+    guardrail_trace: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Guardrail validation events recorded during workflow execution.",
+    )
+
+    # ── Runtime trace ───────────────────────────────────────────────────────────
+    runtime_trace: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Runtime monitoring events recorded during workflow execution.",
     )
 
     # ── Error ─────────────────────────────────────────────────────────────────

@@ -115,6 +115,15 @@ mysql_query : Query MySQL for deterministic structured data.
 mysql_list_tables : Use MySQL to list tables for discovery
 mysql_describe_talbe: Use MySQL to describe table in order to find relationships between tables.
 
+"STRUCTURED DATA RULES:\n"
+"- For employee, title, department, role, or access-list questions, use MySQL tools.\n"
+"- Never guess column names.\n"
+"- Before writing a SELECT query, first call mysql_list_tables if table names are unknown.\n"
+"- Then call mysql_describe_table for the most relevant table.\n"
+"- If a table contains an ID field such as job_title_id, role_id, department_id, or user_id, look for a related lookup table before answering.\n"
+"- Do not stop after finding an ID field. Resolve the ID to the human-readable name when possible.\n"
+"- If a query fails because of an unknown column, do not repeat the same query. Inspect the schema and correct the query.\n\n"
+
 Do not query Postgres directly.
 If document evidence is needed, it must come from CONTEXT produced by the RetrieverAgent.
 
