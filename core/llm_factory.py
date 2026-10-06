@@ -19,7 +19,10 @@ def build_llm() -> Ollama:
     return Ollama(
         model=settings.ollama_model,
         base_url=settings.ollama_base_url,
-        request_timeout=120.0,
+        request_timeout=240.0,
+        temperature=0.0,
+        context_window=16384,
+        additional_kwargs={"num_ctx": 16384},
     )
 
 

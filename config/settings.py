@@ -13,7 +13,8 @@ load_dotenv()
 class Settings:
     # Ollama
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
+    # ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3-coder:30b")
 
     # Postgres
     pg_host: str = os.getenv("PG_HOST", "localhost")
@@ -26,7 +27,7 @@ class Settings:
     pg_password: str = os.getenv("PG_PASSWORD", "")
     pg_vector_table: str = os.getenv("PG_VECTOR_TABLE", "document_ebeddings")
     pg_table: str = os.getenv(
-        "PG__VECTOR_TABLE", "document_embeddings"
+        "PG__VECTOR_TABLE", "document_embeddings_v3"
     )  # 💡 Add this line for the vector store
 
     # MySQL

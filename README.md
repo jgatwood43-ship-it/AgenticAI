@@ -623,7 +623,7 @@ PG_PORT=5432
 PG_DATABASE=AgenticAIvectorDB
 PG_USER=postgres
 PG_PASSWORD=your_password
-PG_VECTOR_TABLE=data_document_embeddings
+PG_VECTOR_TABLE=data_document_embeddings_v3
 
 #####################################################
 # MySQL
