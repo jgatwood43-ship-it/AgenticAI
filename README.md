@@ -113,7 +113,7 @@ ROUTE: Retriever        ROUTE: Answer Generator
 ## Artificial Intelligence
 
 * Ollama
-* Llama 3.2
+* Qwen - qwen3-coder:30b (originally llama3.2)
 * HuggingFace Embeddings
 * BAAI/bge-large-en-v1.5
 
